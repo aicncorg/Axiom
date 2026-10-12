@@ -6,14 +6,14 @@ type Role = "case" | "baseline" | "candidate";
 type Inputs = Record<Role, JsonObject | null>;
 interface Location { sampleIndex: number; t: number; axis?: string; referenceSegmentIndex?: number }
 interface Metric { value?: number | null; unit: string; location?: Location }
-interface Check extends Metric { checkId: string; status: string; limit: number }
+interface Check extends Metric { checkId: string; status: string; limit: number; reason?: string }
 interface Analysis { algorithmId: string; algorithmVersion: string; sourceKind: string; sampleCount: number; metrics: Record<string, Metric>; checks: Check[] }
 interface Difference { metricId: string; baseline?: number | null; candidate?: number | null; delta?: number | null; unit: string; tolerance: number; status: string; reason?: string }
 interface Report { caseId: string; caseContentHash: string; scope: string; outcome: string; baseline: Analysis; candidate: Analysis; differences: Difference[]; reasons: string[]; reportContentHash: string; uncheckedProperties: string[] }
 
 const labels: Record<Role, string> = { case: "刀路与约束", baseline: "基线 A", candidate: "候选 B" };
 const metricLabels: Record<string, string> = { durationSeconds: "运动时间", sampledPathDeviationMaxMm: "采样路径偏差", computationSeconds: "算法计算耗时" };
-const statusLabels: Record<string, string> = { Improved: "改善", Regressed: "退步", Tradeoff: "存在取舍", WithinTolerance: "容差内无变化", CandidateViolatesLimits: "候选超限", Inconclusive: "证据不足", NotComparable: "不可比较", WithinLimit: "满足采样限制", Violated: "超限", InsufficientSamples: "样本不足" };
+const statusLabels: Record<string, string> = { Improved: "改善", Regressed: "退步", Tradeoff: "存在取舍", WithinTolerance: "容差内无变化", CandidateViolatesLimits: "候选超限", Inconclusive: "证据不足", NotComparable: "不可比较", WithinLimit: "满足采样限制", Violated: "超限", InsufficientSamples: "样本不足", NotAssessed: "未评估" };
 
 async function requestJson<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api/v1/benchmarks/cnc/${path}`, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -89,6 +89,7 @@ export function CncBenchmarkWorkbench() {
   const revision = useRef(0);
   const ready = Object.values(inputs).every(Boolean);
   const synthetic = inputs.baseline?.sourceKind === "synthetic-example" || inputs.candidate?.sourceKind === "synthetic-example";
+  const offlineSut = inputs.baseline?.sourceKind === "offline-sut" || inputs.candidate?.sourceKind === "offline-sut";
 
   async function importFile(role: Role, event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -145,6 +146,7 @@ export function CncBenchmarkWorkbench() {
         </section>)}
       </div>
       {synthetic && <p className="cnc-example-note">当前包含合成示例，用于演示回归定位；请替换为实际算法导出结果后再作工程判断。</p>}
+      {offlineSut && <p className="cnc-example-note">当前包含离线 SUT 数据，用于验证评估器接入与重放；不是生产算法、控制器或加工质量证据。A/A 无差异不代表算法改善。</p>}
       <div className="cnc-action-row"><p>单位：mm · XYZ 线性轴 · 按声明的固定周期检查</p><div><button className="button button-secondary" type="button" disabled={!ready || busy} onClick={() => download(inputs, "cnc-benchmark-request.json")}>下载可重放输入</button><button className="button button-primary" type="button" disabled={!ready || busy} onClick={compare}>{busy ? "处理中…" : "比较 A / B"}</button></div></div>
       {error && <div role="alert" className="cnc-error">{error}</div>}
       <PathPreview inputs={inputs} />
@@ -152,10 +154,10 @@ export function CncBenchmarkWorkbench() {
         <div className="cnc-result-heading"><div><span className="eyebrow">采样命令范围内的比较</span><h2 className={`cnc-outcome ${report.outcome}`}>{statusLabels[report.outcome] ?? report.outcome}</h2><p>{report.baseline.algorithmId} {report.baseline.algorithmVersion} → {report.candidate.algorithmId} {report.candidate.algorithmVersion}</p></div><button className="button button-secondary" type="button" onClick={() => download(report, "cnc-benchmark-report.json")}>下载报告</button></div>
         <div className="cnc-table-scroll"><table><thead><tr><th>比较指标</th><th>基线 A</th><th>候选 B</th><th>B − A</th><th>结论</th></tr></thead><tbody>{report.differences.map(item => <tr key={item.metricId}><th>{metricLabels[item.metricId] ?? item.metricId}<small>{item.unit} · 比较容差 {number(item.tolerance)}</small></th><td>{number(item.baseline)}</td><td>{number(item.candidate)}</td><td>{item.delta == null ? "—" : number(item.delta)}</td><td className={item.status}>{statusLabels[item.status] ?? item.status}{item.reason && <small>{item.reason}</small>}</td></tr>)}</tbody></table></div>
         <h3>约束检查与最差位置</h3><p className="cnc-muted">速度、加速度与 Jerk 使用指令位置的离散差分。轨迹开头和结尾之外的状态不在输入中，未推断启停边界。</p>
-        <div className="cnc-table-scroll"><table><thead><tr><th>检查项</th><th>基线 A</th><th>候选 B</th><th>限制</th><th>候选最差位置</th></tr></thead><tbody>{report.candidate.checks.map((check, index) => <tr key={check.checkId}><th>{check.checkId}<small>{check.unit}</small></th><td className={report.baseline.checks[index]?.status}>{number(report.baseline.checks[index]?.value)}</td><td className={check.status}>{number(check.value)}<small>{statusLabels[check.status]}</small></td><td>{number(check.limit)}</td><td>{locate(check.location)}</td></tr>)}</tbody></table></div>
+        <div className="cnc-table-scroll"><table><thead><tr><th>检查项</th><th>基线 A</th><th>候选 B</th><th>限制</th><th>候选最差位置</th></tr></thead><tbody>{report.candidate.checks.map((check, index) => <tr key={check.checkId}><th>{check.checkId}<small>{check.unit}</small></th><td className={report.baseline.checks[index]?.status}>{number(report.baseline.checks[index]?.value)}</td><td className={check.status}>{number(check.value)}<small>{statusLabels[check.status] ?? check.status}</small>{check.reason && <small>{check.reason}</small>}</td><td>{number(check.limit)}</td><td>{locate(check.location)}</td></tr>)}</tbody></table></div>
         <details className="cnc-report-details"><summary>结果身份与计算说明</summary><p>案例：{report.caseId}</p><p>报告：<code>{report.reportContentHash}</code></p><ul>{report.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul></details>
       </section> : <section className="cnc-empty"><h2>从一次可复现的版本比较开始</h2><p>上传三份文件，或载入带有已知偏差的示例。报告会保留指标差异以及超限的样本、时间和轴。</p></section>}
-      <aside className="cnc-scope"><strong>本次检查覆盖什么？</strong><p>采样点到参考折线的单向距离、首尾位置、轴行程和离散 V/A/J 差分，以及同条件下声明的计算耗时。尚未验证采样间连续运动、整条路径的遍历顺序与覆盖、碰撞、实机跟随或加工质量。采样结果中的“改善”只针对本页列出的指标。</p><p>算法导出格式、Case hash 生成方法与 CLI 用法见仓库的 CNC-BENCHMARK.md。</p></aside>
+      <aside className="cnc-scope"><strong>本次检查覆盖什么？</strong><p>采样点到参考路径的单向距离、首尾位置、轴行程和离散 V/A/J 差分，以及同条件下声明的计算耗时。单调直线另检查采样方向与完成性；圆弧、闭合路径和转弯的遍历未评估，不能据此给出强改善结论。尚未验证采样间连续运动、一般路径覆盖、碰撞、实机跟随或加工质量。采样结果中的“改善”只针对本页列出的指标。</p><p>算法导出格式、Case hash 生成方法与 CLI 用法见仓库的 CNC-BENCHMARK.md。</p></aside>
     </div>
   </main>;
 }

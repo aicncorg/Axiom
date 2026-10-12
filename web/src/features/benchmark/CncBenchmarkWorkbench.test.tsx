@@ -20,6 +20,30 @@ function json(body: unknown, status = 200) { return Promise.resolve(new Response
 afterEach(() => vi.unstubAllGlobals());
 
 describe("CNC algorithm comparison", () => {
+  it("distinguishes offline A/A integration data from production evidence", async () => {
+    const offlineExample = { ...example, baseline: { ...example.baseline, sourceKind: "offline-sut" }, candidate: { ...example.candidate, sourceKind: "offline-sut" } };
+    vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("example") ? json(offlineExample) : json({ ...report, outcome: "WithinTolerance" })));
+    render(<CncBenchmarkWorkbench />);
+    fireEvent.click(screen.getByRole("button", { name: "载入回归示例" }));
+    expect(await screen.findByText(/当前包含离线 SUT 数据/)).toHaveTextContent("A/A 无差异不代表算法改善");
+    expect(screen.queryByText(/当前包含合成示例/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "比较 A / B" }));
+    expect(await screen.findByRole("heading", { name: "容差内无变化" })).toBeInTheDocument();
+  });
+
+  it("shows unassessed traversal instead of a successful quality conclusion", async () => {
+    const unassessed = { checkId: "sampled-line-traversal", status: "NotAssessed", value: null, limit: 0.001, unit: "mm", reason: "Arc traversal is not assessed" };
+    const guarded = { ...report, outcome: "Inconclusive", baseline: { ...report.baseline, checks: [unassessed] }, candidate: { ...report.candidate, checks: [unassessed] } };
+    vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("example") ? json(example) : json(guarded)));
+    render(<CncBenchmarkWorkbench />);
+    fireEvent.click(screen.getByRole("button", { name: "载入回归示例" }));
+    await screen.findByText(/当前包含合成示例/);
+    fireEvent.click(screen.getByRole("button", { name: "比较 A / B" }));
+    expect(await screen.findByRole("heading", { name: "证据不足" })).toBeInTheDocument();
+    expect(screen.getByText("未评估")).toBeInTheDocument();
+    expect(screen.getByText("Arc traversal is not assessed")).toBeInTheDocument();
+  });
+
   it("keeps examples opt-in and reports an independently localized regression", async () => {
     const fetchMock = vi.fn((url: string) => url.endsWith("example") ? json(example) : json(report));
     vi.stubGlobal("fetch", fetchMock);

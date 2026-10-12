@@ -21,6 +21,20 @@ axiom serve
 
 样例包含已知超限，`benchmark` 预期退出码为 1。Windows 发布验收继续使用下方冻结环境。
 
+### 没有算法导出或控制器数据时
+
+先用本地 Ruckig 建立评估器接入闭环，无需设备或云端：
+
+```powershell
+python -m pip install -e ".[offline]"
+axiom benchmark-offline-suite --out-dir offline-run-1
+axiom benchmark offline-run-1\short.request.json --format table
+```
+
+三条单轴直线（长位移、短位移、接近速度预算）分别做 A/A 生成与重放，输出案例、导出、输入清单、完整请求、报告和汇总。`sourceKind=offline-sut`，只验证集成和重放，不代表生产算法或实机效果。目录必须新建或为空；再次运行换一个目录。详见 [离线 SUT 工作流](CNC-BENCHMARK.md#没有真实数据时本地离线-sut)。
+
+比较器现在仅对单调直线评估采样遍历；圆弧、闭合路径、转弯保留指标，但未评估遍历时主结论为 `Inconclusive`，不再仅凭更短时间给出强改善结论。
+
 - [CNC 算法接入与使用说明](CNC-BENCHMARK.md)：文件格式、Case hash、CLI、API、指标与结果边界。
 - [近期项目路线](CNC%20算法效果评估与智能优化平台——项目规划蓝图.md)：首先接入真实算法版本、真实刀路和独立回归重放。
 - [ADR-0028](架构决策记录/ADR-0028-先交付CNC算法对比与回归工作流.md)：调整开发顺序，保留现有代码资产。
