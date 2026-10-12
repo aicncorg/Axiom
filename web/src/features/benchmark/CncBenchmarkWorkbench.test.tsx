@@ -20,6 +20,35 @@ function json(body: unknown, status = 200) { return Promise.resolve(new Response
 afterEach(() => vi.unstubAllGlobals());
 
 describe("CNC algorithm comparison", () => {
+  it("loads declared validation cases and refuses malformed input without a success report", async () => {
+    const definition = { id: "missing-sample", title: "漏采样", category: "synthetic-example", purpose: "采样缺口必须拒绝", expectedOutcome: "InputRejected" };
+    vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("validation-cases") ? json([definition]) : url.endsWith("missing-sample") ? json({ definition, request: example, provenance: { note: "synthetic" } }) : json({ detail: [{ loc: ["candidate"], msg: "sampleIndex must be contiguous" }] }, 422)));
+    render(<CncBenchmarkWorkbench />);
+    expect(screen.getByRole("region", { name: "V1 评估方法" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "浏览 V1 评估用例" }));
+    await screen.findByLabelText("评估用例");
+    fireEvent.click(screen.getByRole("button", { name: "生成并载入用例" }));
+    await screen.findByText(/预期：输入拒绝/);
+    fireEvent.click(screen.getByRole("button", { name: "比较 A / B" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("sampleIndex must be contiguous");
+    expect(screen.queryByRole("region", { name: "算法比较报告" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the report when diagnostics are unavailable and clears it on replacement", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("example") ? json(example) : url.endsWith("diagnostics") ? json({ detail: "diagnostics unavailable" }, 503) : json(report)));
+    render(<CncBenchmarkWorkbench />);
+    fireEvent.click(screen.getByRole("button", { name: "载入回归示例" }));
+    await screen.findByText(/当前包含合成示例/);
+    fireEvent.click(screen.getByRole("button", { name: "比较 A / B" }));
+    await screen.findByRole("heading", { name: "候选超限" });
+    fireEvent.click(screen.getByRole("button", { name: "载入时域诊断" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("报告仍有效");
+    expect(screen.getByRole("button", { name: "下载报告" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "采样时域诊断" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("轨迹投影"), { target: { value: "XZ" } });
+    expect(screen.getByRole("img", { name: /XZ 投影/ })).toBeInTheDocument();
+  });
+
   it("distinguishes offline A/A integration data from production evidence", async () => {
     const offlineExample = { ...example, baseline: { ...example.baseline, sourceKind: "offline-sut" }, candidate: { ...example.candidate, sourceKind: "offline-sut" } };
     vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("example") ? json(offlineExample) : json({ ...report, outcome: "WithinTolerance" })));

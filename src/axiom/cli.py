@@ -78,6 +78,12 @@ def _benchmark_command(args: argparse.Namespace) -> int:
             summary = write_offline_suite(args.out_dir)
             print(json.dumps(summary, indent=2, ensure_ascii=False))
             return 0 if summary["passed"] else 1
+        if args.command == "benchmark-validation-suite":
+            from .benchmark_validation import write_validation_suite
+
+            summary = write_validation_suite(args.out_dir)
+            print(json.dumps(summary, indent=2, ensure_ascii=False))
+            return 0 if summary["passed"] else 1
         paths = (args.case, args.baseline, args.candidate)
         if args.request is not None:
             if any(path is not None for path in paths):
@@ -409,6 +415,8 @@ def _parser() -> argparse.ArgumentParser:
     ruckig_command.add_argument("--limit-scale", type=float, default=0.99, help="fraction of case V/A/J limits used by the generator (default 0.99; evaluator limits are unchanged)")
     offline_command = commands.add_parser("benchmark-offline-suite", help="generate and replay three local Ruckig A/A cases; no device or cloud")
     offline_command.add_argument("--out-dir", type=Path, required=True, help="new or empty directory; existing evidence is never overwritten")
+    validation_command = commands.add_parser("benchmark-validation-suite", help="run V1 offline parameter comparisons and declared synthetic fault tests")
+    validation_command.add_argument("--out-dir", type=Path, required=True, help="new or empty directory; saves requests, diagnostic results and expected outcomes")
     standard_command = commands.add_parser("benchmark-standard-cases", help="write the five V1 standard cases and their NC programs")
     standard_command.add_argument("--out-dir", type=Path, required=True)
     standard_command.add_argument("--only", nargs="+", choices=STANDARD_CASE_NAMES)
@@ -448,7 +456,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.command in {"benchmark", "benchmark-case-hash", "benchmark-example", "benchmark-standard-cases", "benchmark-import-trace", "benchmark-ruckig", "benchmark-offline-suite"}:
+    if args.command in {"benchmark", "benchmark-case-hash", "benchmark-example", "benchmark-standard-cases", "benchmark-import-trace", "benchmark-ruckig", "benchmark-offline-suite", "benchmark-validation-suite"}:
         return _benchmark_command(args)
     if args.command == "serve":
         import uvicorn

@@ -1,5 +1,7 @@
 # Axiom
 
+**离线评估 V1**：`axiom benchmark-validation-suite --out-dir evaluation-v1` 运行 17 项 A/A、参数对比与合成反例；工作台可选择用例、投影、XYZ 时域曲线并跳到最差样本。完整方法、判定标准及限制见 [CNC-EVALUATION-V1.md](CNC-EVALUATION-V1.md)。这验证评估器接入与重放，不是生产算法/加工质量证据。
+
 > 当前开发主线：CNC 算法 A/B 对比与回归验证。下方 v0.22 阶段记录保留为参考能力，R5–R7 的扩展暂停，真实现场结论仍以对应证据为准。
 
 Axiom 帮助 CNC 开发者比较两个实际算法版本：在同一份刀路与约束下，发现指标变化、定位超限并重放结果。

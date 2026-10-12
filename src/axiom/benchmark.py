@@ -333,6 +333,12 @@ def _straight_path_direction(path: np.ndarray) -> np.ndarray | None:
     return direction
 
 
+def _command_differences(positions: np.ndarray, period: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    velocity = np.diff(positions, axis=0) / period
+    acceleration = np.diff(velocity, axis=0) / period
+    return velocity, acceleration, np.diff(acceleration, axis=0) / period
+
+
 def _analyse(case: CncBenchmarkCase, run: CncAlgorithmExport) -> BenchmarkRunAnalysis:
     positions = np.asarray([sample.position_mm for sample in run.samples], dtype=float)
     times = np.asarray([sample.t for sample in run.samples], dtype=float)
@@ -396,13 +402,13 @@ def _analyse(case: CncBenchmarkCase, run: CncAlgorithmExport) -> BenchmarkRunAna
 
     # All operators use the declared fixed command period, after validating the
     # supplied timestamps. kth differences are located at their right endpoint.
-    differences = positions
+    derivatives = _command_differences(positions, case.sample_period_seconds)
     for order, (name, unit, limit_field) in enumerate((
         ("Velocity", "mm/s", "maximum_velocity_mm_s"),
         ("Acceleration", "mm/s^2", "maximum_acceleration_mm_s2"),
         ("Jerk", "mm/s^3", "maximum_jerk_mm_s3"),
     ), 1):
-        differences = np.diff(differences, axis=0) / case.sample_period_seconds
+        differences = derivatives[order - 1]
         global_metric = BenchmarkMetric(value=None, unit=unit)
         for axis_index, limits in enumerate(case.axis_limits):
             metric = BenchmarkMetric(value=None, unit=unit)
@@ -413,7 +419,7 @@ def _analyse(case: CncBenchmarkCase, run: CncAlgorithmExport) -> BenchmarkRunAna
                     global_metric = metric
             check(f"{limits.axis}.discrete-{name.lower()}", metric, getattr(limits, limit_field))
         metrics[f"discrete{name}Max"] = global_metric
-    magnitudes = np.linalg.norm(differences, axis=1)
+    magnitudes = np.linalg.norm(derivatives[2], axis=1)
     metrics["discreteJerkRms"] = BenchmarkMetric(value=float(np.sqrt(np.mean(magnitudes * magnitudes))) if len(magnitudes) else None, unit="mm/s^3")
     metrics["computationSeconds"] = BenchmarkMetric(value=run.computation.elapsed_seconds if run.computation else None, unit="s")
     return BenchmarkRunAnalysis(algorithmId=run.algorithm_id, algorithmVersion=run.algorithm_version, sourceKind=run.source_kind, exportContentHash=_hash(run), sampleCount=len(run.samples), metrics=metrics, checks=tuple(checks))
@@ -478,6 +484,33 @@ def compare_cnc_exports(payload: CncBenchmarkRequest | Mapping[str, Any]) -> Cnc
     content = report.model_dump(mode="json", by_alias=True, exclude_none=True)
     content.pop("reportContentHash")
     return report.model_copy(update={"report_content_hash": _hash(content)})
+
+
+def cnc_diagnostics(payload: CncBenchmarkRequest | Mapping[str, Any]) -> dict[str, Any]:
+    """Bounded plotting data; full-sample metrics remain the decision authority."""
+    request = CncBenchmarkRequest.model_validate(payload.model_dump(mode="json", by_alias=True) if isinstance(payload, CncBenchmarkRequest) else payload)
+    result: dict[str, Any] = {"schemaId": "axiom.cnc-diagnostics@1", "caseContentHash": benchmark_case_hash(request.case),
+                              "policy": "Uniform display subset plus signed extrema and check locations; no evaluator resampling. Differences located at right endpoints. No inter-sample certificate."}
+    path = np.asarray(request.case.reference_path, dtype=float)
+    for role, run in (("baseline", request.baseline), ("candidate", request.candidate)):
+        positions = np.asarray([sample.position_mm for sample in run.samples], dtype=float)
+        errors, segments = _path_deviations(positions, path, request.case.reference_arcs or ())
+        derivatives = _command_differences(positions, request.case.sample_period_seconds)
+        analysis = _analyse(request.case, run)
+        indices = set(np.linspace(0, len(positions) - 1, min(600, len(positions)), dtype=int).tolist())
+        indices.update(item.location.sample_index for item in analysis.checks if item.location)
+        for order, values in enumerate((positions, *derivatives)):
+            if len(values):
+                for axis in range(3):
+                    indices.update((int(np.argmin(values[:, axis])) + order, int(np.argmax(values[:, axis])) + order))
+        points = []
+        for index in sorted(indices):
+            points.append({"sampleIndex": index, "t": run.samples[index].t, "positionMm": positions[index].tolist(),
+                           "pathDeviationMm": float(errors[index]), "referenceSegmentIndex": int(segments[index]),
+                           **{name: values[index - order].tolist() if index >= order else None
+                              for order, (name, values) in enumerate(zip(("velocityMmS", "accelerationMmS2", "jerkMmS3"), derivatives, strict=True), 1)}})
+        result[role] = {"exportContentHash": analysis.export_content_hash, "sampleCount": len(positions), "displayCount": len(points), "points": points}
+    return result
 
 
 def cnc_benchmark_example() -> CncBenchmarkRequest:
